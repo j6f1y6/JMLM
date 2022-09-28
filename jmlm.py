@@ -9,11 +9,11 @@ from sklearn.cluster import KMeans
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
+from load_data import load_data
+
 
 class JMLM():
-    def __init__(self, dim, num_classes):
-        self.dim = dim
-        self.num_classes = num_classes
+    def __init__(self):
         self.centroids = []
         self.F_p = []
         self.Jacobians = []
@@ -49,7 +49,8 @@ class JMLM():
                 max_F_p = self.F_p
                 max_Jacobians = self.Jacobians
                 max_acc = acc
-        print(max_acc)
+        print('number of cent: ', len(max_centroids))
+        print('Prediction Vaild in JMLM:', max_acc)
         self.centroids = max_centroids
         self.F_p = max_F_p
         self.Jacobians = max_Jacobians
@@ -68,29 +69,15 @@ class JMLM():
 
 
 if __name__ == '__main__':
-    # iris dataset
-    data = pd.read_csv("./JMLM/datasets/Iris/Iris.csv")
-    X = data[['SepalLengthCm', 'SepalWidthCm', 'PetalLengthCm', 'PetalWidthCm']].to_numpy()
-    y = data["Species"].to_numpy()
+    dataset = "iris"
+    X_train, X_test, y_train, y_test = load_data(dataset)
 
-    # mnist dataset
-    # X, y = load_digits(return_X_y=True)
-    
+    n_iterations = 20
+    n_max_center = 50
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
-    
-    labelencoder = LabelEncoder()
-    y_train = labelencoder.fit_transform(y_train).reshape(-1, 1)
-    y_test = labelencoder.transform(y_test)
-
-    onehotencoder = OneHotEncoder()
-    y_train=onehotencoder.fit_transform(y_train).toarray()
-    
-    print(pd.DataFrame(y_train))
-   
-    jmlm = JMLM(64, 10)
-    jmlm.train(X_train, y_train, 5, 10)
+    jmlm = JMLM()
+    jmlm.train(X_train, y_train, n_iterations, n_max_center)
     y_pred = jmlm.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
-    y_pred=onehotencoder.transform(y_pred.reshape(-1, 1)).toarray()
-    print(acc)
+    # y_pred=onehotencoder.transform(y_pred.reshape(-1, 1)).toarray()
+    print('Prediction Accuracy after JMLM:', acc)
