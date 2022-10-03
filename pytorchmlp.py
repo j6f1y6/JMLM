@@ -43,7 +43,7 @@ if __name__ == '__main__':
     learning_rate = 0.001
     batch_size = 16
     mlp_internal_dim = 16
-    X_train, X_test, y_train, y_test = load_data("mini_mnist")
+    X_train, X_test, y_train, y_test = load_data("cifar10")
 
     # labelencoder = LabelEncoder()
     # y_train = labelencoder.fit_transform(y_train).reshape(-1, 1)
