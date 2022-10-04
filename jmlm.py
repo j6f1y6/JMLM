@@ -37,7 +37,7 @@ class JMLM():
 
         
     def deep_train(self, X, y, iterations, max_num_centroids):
-        self.train(X, y, 5, 5)
+        self.train(X, y, 1, 1)
         X_train, X_vaild, y_train, y_vaild = train_test_split(X, y, test_size=0.20)
         new_X_train, new_y_train = X_train, y_train
         for _ in tqdm.tqdm(range(iterations)):
