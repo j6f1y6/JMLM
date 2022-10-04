@@ -32,11 +32,11 @@ def load_data(dataset):
     X_test = X_test.reshape(-1, math.prod(X_train.shape[1:]))
 
     labelencoder = LabelEncoder()
-    y_train = labelencoder.fit_transform(y_train).reshape(-1, 1)
+    y_train_label = labelencoder.fit_transform(y_train)
     y_test = labelencoder.transform(y_test)
 
     onehotencoder = OneHotEncoder()
-    y_train=onehotencoder.fit_transform(y_train).toarray()
+    y_train = onehotencoder.fit_transform(y_train_label.reshape(-1, 1)).toarray()
 
     return  X_train, X_test, y_train, y_test
 

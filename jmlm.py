@@ -50,7 +50,7 @@ class JMLM():
                 current_centroids, current_F_p = self.get_centroid(new_X_train, new_y_train, c)
                 current_Jacobians = self.calculate_jacobian(X_train, y_train, current_centroids, current_F_p)
                 
-                y_pred = self.deep_predict(X_vaild, current_centroids, current_F_p, current_Jacobians)
+                y_pred = self.test_predict(X_vaild, current_centroids, current_F_p, current_Jacobians)
                 acc = accuracy_score(y_vaild.argmax(axis=1), y_pred)
                 if acc < max_acc: continue
                 max_acc = acc
@@ -68,7 +68,7 @@ class JMLM():
             new_X_train, new_y_train = self.clusters_loss(X_train, y_train, max_num_centroids)
 
 
-    def deep_predict(self, X, current_centroids, current_F_p, current_Jacobians):
+    def test_predict(self, X, current_centroids, current_F_p, current_Jacobians):
         original_centroids = self.centroids
         original_F_p = self.F_p
         original_Jacobians = self.Jacobians
@@ -101,9 +101,36 @@ class JMLM():
         return max_X_train, max_y_train
 
 
-    def jjlm_train(self):
-        pass
+    def jjlm_train(self, X, y, max_num_centroids):
+        self.update_centroids(np.empty([0, X.shape[1]]), np.empty([0, y.shape[1]]), [])
+        X_train, X_vaild, y_train, y_vaild = train_test_split(X, y, test_size=0.20)
+        train_labels = []
+        for label in y_train:
+            train_labels.append(np.where(label==1)[0][0])
+        
+       
+        for ci in np.unique(np.array(train_labels)):
+            x_ci = X_train[train_labels==ci]
+            y_ci = y_train[train_labels==ci]
+            max_acc = 0
+            max_centroids = []
+            max_F_p = []
+            max_Jacobians = []
 
+            for c in tqdm.tqdm(range(1, max_num_centroids+1)):
+                centroids, F_p  = self.get_centroid(x_ci, y_ci, c)
+                Jacobians = self.calculate_jacobian(x_ci, y_ci, centroids, F_p)
+                y_pred = self.test_predict(X_vaild, centroids, F_p, Jacobians)
+                acc = accuracy_score(y_vaild.argmax(axis=1), y_pred)
+                if acc < max_acc: continue
+                max_centroids = centroids
+                max_F_p = F_p
+                max_Jacobians = Jacobians
+                max_acc = acc
+
+            
+            self.update_centroids(np.append(self.centroids, max_centroids, axis=0), np.append(self.F_p, max_F_p, axis=0), self.Jacobians + max_Jacobians)
+        print(self.centroids)
 
     def train(self, X, y, iterations, max_num_centroids):
         X_train, X_vaild, y_train, y_vaild = train_test_split(X, y, test_size=0.20)
