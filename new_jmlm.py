@@ -44,16 +44,16 @@ class JMLM():
         training_data = [[X, y]]
         layer = 0
         min_mse = float('inf')
-        while len(self.points) < max_points and training_data:
+        while (len(self.points) < max_points and training_data):
             logging.info(f"======Layer {layer}======")
             next_data = []
-            layer_max_node = 3
+            layer_max_node = 10
             node_threshold = threshold
             
             for data in training_data:
                 if len(data[0]):
                     mse, partial_mse, points, d_points, jacobians = self.train(data[0], data[1], max_points=layer_max_node, threshold=node_threshold, deep=True)
-                    if mse < threshold:
+                    if mse < threshold or len(self.points) > max_points:
                         min_mse = mse
                         break
                     logging.info(f"Individual MSE: {np.array(partial_mse)}")
@@ -73,12 +73,14 @@ class JMLM():
         target_points = []
         target_d_points = []
         target_jacobians = []
-        K = 1 if not deep else 2
-        
-        for n_point in tqdm.tqdm(range(K, max_points + 1)):
+
+        for n_point in tqdm.tqdm(range(1, max_points + 1)):
             logging.info(f"num of max point: {n_point}")
             points, d_points = self.clustering(X, y, n_point)
             jacobians = self.computing_jacobian(X, y, points, d_points)
+            # logging.info(f"points shape: {points.shape}")
+            # logging.info(f"d points shape: {d_points.shape}")
+            # logging.info(f"points: {points}, d points: {d_points}")
             mse, partial_mse = self.get_mse(X, y, points, d_points, jacobians, deep)
 
             logging.info(f"MSE: {mse}")
@@ -139,24 +141,25 @@ if __name__ == '__main__':
     X_train, X_test, y_train, y_test = load_data(dataset)
     logging.info(f"Dataset: {dataset}")
 
-    n_pca = int(X_train.shape[1]*0.8)
+    # n_pca = int(X_train.shape[1]*0.9)
 
-    pca = PCA(n_components=n_pca)
-    X_train = pca.fit_transform(X_train)
-    X_test = pca.transform(X_test)
+    # pca = PCA(n_components=n_pca)
+    # X_train = pca.fit_transform(X_train)
+    # X_test = pca.transform(X_test)
 
-    clf = LinearDiscriminantAnalysis()
-    X_train = clf.fit_transform(X_train, y_train.argmax(axis=1))
-    X_test = clf.transform(X_test)
+    # clf = LinearDiscriminantAnalysis()
+    # X_train = clf.fit_transform(X_train, y_train.argmax(axis=1))
+    # X_test = clf.transform(X_test)
 
     start_time = time.time()
     jmlm = JMLM()
-    jmlm.deep_train(X_train, y_train, max_points=100, threshold=0.001)
-    # jmlm.train(X_train, y_train, max_points=50, threshold=0.01)
+    # jmlm.deep_train(X_train, y_train, max_points=100, threshold=0.0001)
+    jmlm.train(X_train, y_train, max_points=2, threshold=0.0001)
 
     y_pred = jmlm.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
     logging.info(f'Prediction Accuracy: {acc}')
     logging.info("--- %s seconds ---" % (time.time() - start_time))
+    logging.info(f"===============END===============")
     
     
