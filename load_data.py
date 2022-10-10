@@ -39,8 +39,3 @@ def load_data(dataset):
     y_train = onehotencoder.fit_transform(y_train_label.reshape(-1, 1)).toarray()
 
     return  X_train, X_test, y_train, y_test
-
-
-
-if __name__ == "__main__":
-    load_data("iris")
