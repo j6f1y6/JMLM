@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error
 import logging
 import time
+import tqdm
 
 
 class JMLM():
@@ -57,7 +58,7 @@ class JMLM():
         target_points = []
         target_d_points = []
         target_jacobians = []
-        for n_point in range(1, max_points + 1):
+        for n_point in tqdm.tqdm(range(1, max_points + 1)):
             logging.info(f"num of max point: {n_point}")
             points, d_points = self.clustering(X, y, n_point)
             jacobians = self.computing_jacobian(X, y, points, d_points)
