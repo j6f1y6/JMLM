@@ -8,6 +8,10 @@ import logging
 import time
 import tqdm
 
+from sklearn.decomposition import PCA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
+
 
 class JMLM():
     def __init__(self) -> None:
@@ -38,18 +42,29 @@ class JMLM():
 
     def deep_train(self, X, y, max_points=10, threshold=0.1):
         training_data = [[X, y]]
-        # while(len(self.points) < max_points):
-        for data in training_data:
-            mse, partial_mse, points, d_points, jacobians = self.train(data[0], data[1], max_points=3, threshold=threshold, deep=True)
-            logging.info(np.array(partial_mse))
-            for ci, test in enumerate(np.array(partial_mse) < threshold):
-                logging.info(f"{ci}, {test}")
-                if not test:
-                    logging.info(f"cluster {ci} mse is not enough")
-                    logging.info(points[ci])
-                    logging.info(d_points[ci])
-                    logging.info(jacobians[ci])
-
+        layer = 0
+        min_mse = float('inf')
+        while len(self.points) < max_points and training_data:
+            logging.info(f"======Layer {layer}======")
+            next_data = []
+            layer_max_node = 3
+            node_threshold = threshold
+            
+            for data in training_data:
+                if len(data[0]):
+                    mse, partial_mse, points, d_points, jacobians = self.train(data[0], data[1], max_points=layer_max_node, threshold=node_threshold, deep=True)
+                    if mse < threshold:
+                        min_mse = mse
+                        break
+                    logging.info(f"Individual MSE: {np.array(partial_mse)}")
+                    for ci, enough in enumerate(np.array(partial_mse) < threshold):
+                        if not enough :
+                            clusters, _ = pairwise_distances_argmin_min(data[0], points)
+                            new_X = data[0][clusters==ci]
+                            next_data.append([new_X, data[1][clusters==ci]])
+            if min_mse < threshold: break
+            training_data = next_data
+            layer += 1
 
 
     def train(self, X, y, max_points=10, threshold=0.1, deep=False):
@@ -58,7 +73,9 @@ class JMLM():
         target_points = []
         target_d_points = []
         target_jacobians = []
-        for n_point in tqdm.tqdm(range(1, max_points + 1)):
+        K = 1 if not deep else 2
+        
+        for n_point in tqdm.tqdm(range(K, max_points + 1)):
             logging.info(f"num of max point: {n_point}")
             points, d_points = self.clustering(X, y, n_point)
             jacobians = self.computing_jacobian(X, y, points, d_points)
@@ -72,9 +89,11 @@ class JMLM():
             target_jacobians = jacobians
             target_partial_mse = partial_mse
             if min_mse < threshold: break
+        
         self.points += target_points.tolist()
         self.d_points += target_d_points.tolist()
         self.jacobians += target_jacobians
+        logging.info(f"num of center: {len(self.points)}")
         if deep:
             return min_mse, target_partial_mse, target_points, target_d_points, target_jacobians
 
@@ -114,16 +133,26 @@ class JMLM():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(filename='normal_JMLM.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
+    logging.basicConfig(filename='new_JMLM.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
     logging.info(f"===============Execution: JMLM===============")
     dataset = "mnist"
     X_train, X_test, y_train, y_test = load_data(dataset)
     logging.info(f"Dataset: {dataset}")
 
+    n_pca = int(X_train.shape[1]*0.8)
+
+    pca = PCA(n_components=n_pca)
+    X_train = pca.fit_transform(X_train)
+    X_test = pca.transform(X_test)
+
+    clf = LinearDiscriminantAnalysis()
+    X_train = clf.fit_transform(X_train, y_train.argmax(axis=1))
+    X_test = clf.transform(X_test)
+
     start_time = time.time()
     jmlm = JMLM()
-    # jmlm.deep_train(X_train, y_train, max_points=10, threshold=0.01)
-    jmlm.train(X_train, y_train, max_points=50, threshold=0.01)
+    jmlm.deep_train(X_train, y_train, max_points=100, threshold=0.001)
+    # jmlm.train(X_train, y_train, max_points=50, threshold=0.01)
 
     y_pred = jmlm.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
