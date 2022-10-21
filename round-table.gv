@@ -1,0 +1,9 @@
+// The Round Table
+digraph {
+	"剪刀" [label="剪刀"]
+	"石頭" [label="石頭"]
+	"布" [label="布"]
+	"剪刀" -> "布" [label="克制"]
+	"石頭" -> "剪刀" [label="克制"]
+	"布" -> "石頭" [label="克制"]
+}
