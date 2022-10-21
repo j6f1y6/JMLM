@@ -11,20 +11,7 @@ from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import MinMaxScaler
 
-def low_dim(X_train, X_test, y_train, n_pca=0, pca=True, lda=True):
-    if pca:
-        if n_pca == 0:
-            n_pca = int(X_train.shape[1]*0.8)
-        pca = PCA(n_components=n_pca)
-        X_train = pca.fit_transform(X_train)
-        X_test = pca.transform(X_test)
-    if lda:
-        clf = LinearDiscriminantAnalysis()
-        X_train = clf.fit_transform(X_train, y_train.argmax(axis=1))
-        X_test = clf.transform(X_test)
-    return X_train, X_test
-
-def load_data(dataset, onehot=True, normalization=True):
+def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False):
     if dataset == "iris_test":
         data = pd.read_csv("D:/Applications/vscode/workspace/JMLM/datasets/Iris/Iris.csv")
         X = data[['SepalLengthCm', 'SepalWidthCm', 'PetalLengthCm', 'PetalWidthCm']].to_numpy()
@@ -107,11 +94,21 @@ def load_data(dataset, onehot=True, normalization=True):
     labelencoder = LabelEncoder()
     y_train = labelencoder.fit_transform(y_train)
     y_test = labelencoder.transform(y_test)
+
     if onehot:
         onehotencoder = OneHotEncoder()
         y_train = onehotencoder.fit_transform(y_train.reshape(-1, 1)).toarray()
         y_test = onehotencoder.transform(y_test.reshape(-1, 1)).toarray()
 
+    if pca < 1 and pca > 0:
+        pca = PCA(n_components=int(X_train.shape[1]*pca))
+        X_train = pca.fit_transform(X_train)
+        X_test = pca.transform(X_test)
+
+    if lda:
+        clf = LinearDiscriminantAnalysis()
+        X_train = clf.fit_transform(X_train, y_train.argmax(axis=1) if onehot else y_train)
+        X_test = clf.transform(X_test)
 
 
     return  X_train, X_test, y_train, y_test

@@ -1,38 +1,40 @@
-from sklearn.cluster import KMeans
-from sklearn.metrics import pairwise_distances_argmin_min
-from load_data import load_data
-from kmeans import KmeansClassifier
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, mean_squared_error
-import logging
+import os
 import time
 import tqdm
-import matplotlib.pyplot as plt
+import wandb
+import logging
 import datetime
-import jmlm as old
-import os
+import numpy as np
+import matplotlib.pyplot as plt
 from graphviz import Digraph
+from sklearn.cluster import KMeans
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import pairwise_distances_argmin_min, accuracy_score, mean_squared_error
+
+import jmlm as old
+from load_data import load_data
 
 os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin'
 logging.getLogger('matplotlib.font_manager').disabled = True
 
+# wandb.init(project="my-test-project")
 
-
-
-from sklearn.decomposition import PCA
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-
-
+# wandb.config = {
+# #   "learning_rate": 0.001,
+# #   "epochs": 100,
+# #   "batch_size": 128
+#     "max_centers": 100,
+#     "threshold": 0.01
+# }
 
 class JMLM():
     def __init__(self) -> None:
         self.points = []
         self.d_points = []
         self.jacobians = []
-        self.dot = Digraph(comment='Tree')
         self.graph_data = []
+        self.dot = Digraph(comment='Tree')
 
 
     def view(self):
@@ -83,8 +85,12 @@ class JMLM():
                     min_mse = mse
                     break
                 logging.info(f"Individual MSE: {np.array(partial_mse)}")
-                for ci, enough in enumerate(np.array(partial_mse) < threshold):
-                    if not enough :
+                for ci, mse in enumerate(partial_mse):
+                    enough = np.array(mse) < threshold
+                    print(list(points[ci]))
+                    print(enough)
+                    print(list(self.points).count(list(points[ci])) < 2)
+                    if not enough and list(self.points).count(list(points[ci])) < 2:
                         clusters, _ = pairwise_distances_argmin_min(data[0], points)
                         new_X = data[0][clusters==ci]
                         next_data.append([new_X, data[1][clusters==ci]])
@@ -100,7 +106,7 @@ class JMLM():
         return acc_list, knn_acc_list, mse_list
 
 
-    def train(self, X, y, X_kmeans, y_kmeans, max_points=10, threshold=0.1, deep=False, to_max=False, kmeans_iter=5, n_current_node=0):
+    def train(self, X, y, X_kmeans, y_kmeans, max_points=10, threshold=0.1, deep=False, to_max=False, kmeans_iter=10, n_current_node=0):
         self.y_labels = np.unique(np.array(y), axis=0)
         self.y_labels = np.array(sorted(self.y_labels, key=lambda e: e.argmax()))
         min_mse = float('inf')
@@ -113,12 +119,11 @@ class JMLM():
         all_mse_list = []
         all_knn_list = []
 
-        K = max_points if to_max else 1
+        K = max_points if to_max or deep else 1
 
         for n_point in tqdm.tqdm(range(K, max_points + 1)):
             if len(X_kmeans) < n_point: break
             logging.info(f"current num of max point: {n_point}")
-            # points, d_points = self.clustering(X, y, n_point)
             acc_list = []
             mse_list = []
             knn_list = []
@@ -147,9 +152,10 @@ class JMLM():
                 target_jacobians = jacobians
                 target_partial_mse = partial_mse
                 if min_mse < threshold: break
-            all_acc_list.append(max(acc_list))
-            all_mse_list.append(min(mse_list))
-            all_knn_list.append(max(knn_list))
+            ki = np.array(acc_list).argmax(axis=0)
+            all_acc_list.append(acc_list[ki])
+            all_mse_list.append(mse_list[ki])
+            all_knn_list.append(knn_list[ki])
         
         logging.info(f"{target_points.shape = }")
 
@@ -157,21 +163,24 @@ class JMLM():
         self.d_points += target_d_points.tolist()
         self.jacobians += target_jacobians
         logging.info(f"final num of center: {len(self.points)}")
-        if deep:
-            if len(self.graph_data) == 0:
-                data_info = f"n_feature: {X.shape[1]}\nmse: {mse}\nsamples: {X.shape[0]}"
-                self.graph_data.append({"index" : str(n_current_node), "detail" : data_info, "parent" : None})
-
-            n_parent = str(n_current_node)
-            n_current = len(self.graph_data)
-            clusters, _ = pairwise_distances_argmin_min(X_kmeans, target_points)
-            for ci in range(len(target_points)):
-                X_ci = X_kmeans[clusters==ci]
-                node_detail = f"center: {list(np.around(np.array(target_points[ci]),2))}\nmse: {target_partial_mse[ci]}\nsamples: {X_ci.shape[0]}"
-                self.graph_data.append({"index" : str(n_current), "detail" : node_detail, "parent" : n_parent})
-                n_current += 1
-            return min_mse, target_partial_mse, target_points
+        if not deep:
+            mse, target_partial_mse, _, _ = self.get_mse(X, y, np.array(self.points), np.array(self.d_points), self.jacobians, True, X, y)
         
+        if len(self.graph_data) == 0:
+            data_info = f"n_feature: {X.shape[1]}\nmse: {mse}\nsamples: {X.shape[0]}"
+            self.graph_data.append({"index" : str(n_current_node), "detail" : data_info, "parent" : None})
+
+        n_parent = str(n_current_node)
+        n_current = len(self.graph_data)
+        clusters, _ = pairwise_distances_argmin_min(X_kmeans, target_points)
+        for ci in range(len(target_points)):
+            X_ci = X_kmeans[clusters==ci]
+            node_detail = f"center: {list(np.around(np.array(target_points[ci]), 2))}\nmse: {target_partial_mse[ci]}\nsamples: {X_ci.shape[0]}"
+            self.graph_data.append({"index" : str(n_current), "detail" : node_detail, "parent" : n_parent})
+            n_current += 1
+
+        if deep:
+            return min_mse, target_partial_mse, target_points
         return all_acc_list, all_knn_list, all_mse_list
 
 
@@ -183,6 +192,7 @@ class JMLM():
         d_points = y_train[X_closest]
         return replaced_centers, d_points
 
+
     def computing_jacobian(self, X, y, replaced_centers, d_points):
         jacobians = []
         for ci in range(len(replaced_centers)):
@@ -190,11 +200,11 @@ class JMLM():
             D_F = y - d_points[ci]
 
             # nxN @ Nxm => nxm
-            J_p = np.linalg.pinv(D_p) @ D_F
-            jacobians.append(np.transpose(J_p))
+            # J_p = np.linalg.pinv(D_p) @ D_F
+            # jacobians.append(np.transpose(J_p))
 
-            # jacobian = np.transpose(D_F) @ D_p @ (np.transpose(np.linalg.pinv(np.transpose(D_p) @ D_p)))
-            # jacobians.append(jacobian)
+            jacobian = np.transpose(D_F) @ D_p @ (np.transpose(np.linalg.pinv(np.transpose(D_p) @ D_p)))
+            jacobians.append(jacobian)
             
         return jacobians
 
@@ -239,22 +249,6 @@ class JMLM():
         y_pred, _ = pairwise_distances_argmin_min(y_forward, self.y_labels)
         return y_forward.argmax(axis=1), knn
 
-def draw_graph(X_train, y_train, jmlm):
-    dot = Digraph(comment='Tree')
-
-    mse, partial_mse, _, _ = jmlm.get_mse(X_train, y_train, np.array(jmlm.points), np.array(jmlm.d_points), jmlm.jacobians, True, X_train, y_train)
-    data_info = f"n_feature: {X_train.shape[1]}\nmse: {mse}\nsamples: {X_train.shape[0]}"
-    
-    dot.node("0", data_info)
-    clusters, _ = pairwise_distances_argmin_min(X_train, jmlm.points)
-    for xi, ci in enumerate(range(len(jmlm.points))):
-        X_ci = X_train[clusters==ci]
-        y_ci = y_train[clusters==ci]
-        node_detail = f"center: {list(np.around(np.array(jmlm.points[ci]),2))}\nmse: {partial_mse[ci]}\nsamples: {X_ci.shape[0]}"
-        
-        dot.node(str(xi+1), node_detail)
-        dot.edge("0", str(xi+1))
-    dot.view()
 
 def plot_mse(fig, ax, mse_list):
     ax[1].set_title(f'min MSE: {min(mse_list)}')
@@ -273,6 +267,7 @@ def plot_acc(fig, ax, jmlm_list, knn_list):
     ax[0].set_title(f'Max Valid Accuracy(JMLM max:{max(jmlm_list)})')
     return fig, ax
 
+
 def data_logger(acc_train, acc_test, knn_acc_train, knn_acc_test, n_max_node, threshold, n_node, dataset, start_time):
     
     logging.info(f"Dataset: {dataset}")
@@ -285,18 +280,36 @@ def data_logger(acc_train, acc_test, knn_acc_train, knn_acc_test, n_max_node, th
     logging.info("--- %s seconds ---" % (time.time() - start_time))
     logging.info(f"===============END===============")
 
+def graph_info(dot, acc_train, acc_test, n_max_node, threshold, n_node, dataset, mse, knn_acc, n_layer_node, start_time):
+    dot.attr(label=f'Dataset: {dataset}\n'
+             f"threshold: {threshold}\n"
+             f"MAX points: {n_max_node}\n"
+             f"MAX layer points: {n_layer_node}\n"
+             f'Number of Node(result): {n_node}\n'
+             f'Train Prediction Accuracy: {acc_train}\n'
+             f'Test Prediction Accuracy: {acc_test}\n'
+             f'Final MSE: {mse}\n'
+             f'KNN accuracy: {knn_acc}\n'
+             "--- %s seconds ---" % (time.time() - start_time)
+             )
+
     
 def main():
     logging.basicConfig(filename='new_JMLM.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
     logging.info(f"===============Execution: JMLM===============")
     types = ["JMLM", "Deep", "old"]
-    training_type = "Deep"
+    training_type = "JMLM"
     dataset = "ICU"
-    n_max_node = 100
-    threshold = 0.1
+    n_max_node = 20
+    threshold = 0.11
     to_max = False
     kmeans_iter = 20
-    n_layer_node = 20
+
+
+    # start_n_layer_node = 2 
+    max_n_layer_node = 10
+    start_n_layer_node = max_n_layer_node
+    
     onehot = False if training_type == types[2] else True
     fig, ax = plt.subplots(1, 2, figsize=(16, 10))
 
@@ -304,50 +317,48 @@ def main():
     
     print(f"Running JMLM...\nDataset: {dataset}")
 
-
-    # KNeighborsClassifier
+    # KNeighbors Classifier
     neigh = KNeighborsClassifier(n_neighbors=3).fit(X_train, y_train)
     y_knn_preds = neigh.predict(X_test)
     y_knn_acc = accuracy_score(y_test, y_knn_preds)
-    print(y_knn_acc)
 
-    # n_pca = int(X_train.shape[1]*0.8)
 
-    # pca = PCA(n_components=n_pca)
-    # X_train = pca.fit_transform(X_train)
-    # X_test = pca.transform(X_test)
+    all_train_acc = 0
+    all_test_acc = 0
+    for n_layer_node in range(start_n_layer_node, max_n_layer_node + 1):
+        start_time = time.time()
+        jmlm = JMLM() if training_type != types[2] else old.JMLM()
+        acc_list, knn_acc_list, mse_list = [], [], []
+        if training_type == types[0]:
+            acc_list, knn_acc_list, mse_list = jmlm.jmlm_train(X_train, y_train, max_points=n_max_node, threshold=threshold, to_max=to_max, kmeans_iter=kmeans_iter)
+        elif training_type == types[1]:
+            acc_list, knn_acc_list, mse_list = jmlm.deep_train(X_train, y_train, max_points=n_max_node, layer_max_node=n_layer_node, threshold=threshold)
+        elif training_type == types[2]:
+            acc_list, knn_acc_list, mse_list = jmlm.train(X_train, y_train, kmeans_iter, n_max_node, X_test, y_test)
+            
+        y_train_pred, y_train_knn_pred = jmlm.predict(X_train)
+        y_test_pred, y_test_knn_pred = jmlm.predict(X_test)
+        knn_acc_train = accuracy_score(y_train, y_train_knn_pred)
+        knn_acc_test = accuracy_score(y_test, y_test_knn_pred)
+        acc_train = accuracy_score(y_train.argmax(axis=1) if onehot else y_train, y_train_pred)
+        acc_test = accuracy_score(y_test.argmax(axis=1) if onehot else y_train, y_test_pred)
+        train_mse, _, _, _ = jmlm.get_mse(X_train, y_train, jmlm.points, jmlm.d_points, jmlm.jacobians, False)
+        all_train_acc += acc_train
+        all_test_acc += acc_test
 
-    # clf = LinearDiscriminantAnalysis()
-    # X_train = clf.fit_transform(X_train, y_train.argmax(axis=1) if onehot else y_train)
-    # X_test = clf.transform(X_test)
-    
-
-    start_time = time.time()
-    jmlm = JMLM() if training_type != types[2] else old.JMLM()
-    acc_list, knn_acc_list, mse_list = [], [], []
-    if training_type == types[0]:
-        acc_list, knn_acc_list, mse_list = jmlm.jmlm_train(X_train, y_train, max_points=n_max_node, threshold=threshold, to_max=to_max, kmeans_iter=kmeans_iter)
-    elif training_type == types[1]:
-        acc_list, knn_acc_list, mse_list = jmlm.deep_train(X_train, y_train, max_points=n_max_node, layer_max_node=n_layer_node, threshold=threshold)
-    elif training_type == types[2]:
-        acc_list, knn_acc_list, mse_list = jmlm.train(X_train, y_train, kmeans_iter, n_max_node, X_test, y_test)
+        data_logger(acc_train, acc_test, knn_acc_train, knn_acc_test, n_max_node, threshold, len(jmlm.points), dataset, start_time)
+        graph_info(jmlm.dot, acc_train, acc_test, n_max_node, threshold, len(jmlm.points), dataset, train_mse, y_knn_acc, n_layer_node, start_time)
+        jmlm.view()
+        # draw_graph(X_train, y_train, jmlm)
+        if training_type != types[1]:
+            fig, ax = plot_acc(fig, ax, acc_list, knn_acc_list)
+            fig, ax = plot_mse(fig, ax, mse_list)
+            fig.suptitle(f'Dataset: {dataset}\n')
+            fig.savefig(dataset + "_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S") + ".png")
+            plt.show()
+    logging.info(f'ALL Train Prediction Accuracy: {all_train_acc / ((max_n_layer_node - start_n_layer_node + 1)*2)}')
+    logging.info(f'ALL Test Prediction Accuracy: {all_test_acc / ((max_n_layer_node - start_n_layer_node + 1)*2)}')
         
-    y_train_pred, y_train_knn_pred = jmlm.predict(X_train)
-    y_test_pred, y_test_knn_pred = jmlm.predict(X_test)
-    knn_acc_train = accuracy_score(y_train, y_train_knn_pred)
-    knn_acc_test = accuracy_score(y_test, y_test_knn_pred)
-    acc_train = accuracy_score(y_train.argmax(axis=1) if onehot else y_train, y_train_pred)
-    acc_test = accuracy_score(y_test.argmax(axis=1) if onehot else y_train, y_test_pred)
-
-    data_logger(acc_train, acc_test, knn_acc_train, knn_acc_test, n_max_node, threshold, len(jmlm.points), dataset, start_time)
-    jmlm.view()
-    # draw_graph(X_train, y_train, jmlm)
-    fig, ax = plot_acc(fig, ax, acc_list, knn_acc_list)
-    fig, ax = plot_mse(fig, ax, mse_list)
-    fig.suptitle(f'Dataset: {dataset}\n')
-    fig.savefig(dataset + "_" + datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S") + ".png")
-    if training_type != types[1]:
-        plt.show()
 
 if __name__ == '__main__':
     main()
