@@ -1,3 +1,4 @@
+import cv2
 import math
 import numpy as np
 import pandas as pd
@@ -11,7 +12,30 @@ from sklearn.decomposition import PCA
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import MinMaxScaler
 
-def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False):
+def add_gaussian_noise(X_imgs):
+    gaussian_noise_imgs = []
+    for img in X_imgs:
+        mean = 0
+        var = 10
+        sigma = var ** 0.5
+        gaussian = np.random.normal(mean, sigma, img.shape)
+
+        noisy_image = np.zeros(img.shape, np.float32)
+
+        if len(img.shape) == 2:
+            noisy_image = img + gaussian
+        else:
+            noisy_image[:, :, 0] = img[:, :, 0] + gaussian
+            noisy_image[:, :, 1] = img[:, :, 1] + gaussian
+            noisy_image[:, :, 2] = img[:, :, 2] + gaussian
+
+        cv2.normalize(noisy_image, noisy_image, 0, 255, cv2.NORM_MINMAX, dtype=-1)
+        noisy_image = noisy_image.astype(np.uint8)
+        gaussian_noise_imgs.append(noisy_image)
+    return np.array(gaussian_noise_imgs, dtype = np.float32)
+
+
+def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False, noise=False):
     if dataset == "iris_test":
         data = pd.read_csv("D:/Applications/vscode/workspace/JMLM/datasets/Iris/Iris.csv")
         X = data[['SepalLengthCm', 'SepalWidthCm', 'PetalLengthCm', 'PetalWidthCm']].to_numpy()
@@ -76,6 +100,8 @@ def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False):
 
     elif dataset == "mnist":
         (X_train, y_train), (X_test, y_test) = mnist.load_data()
+        if noise:
+            X_train = add_gaussian_noise(X_train)
 
     elif dataset == "cifar10":
         (X_train, y_train), (X_test, y_test) = cifar10.load_data()
