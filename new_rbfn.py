@@ -1,4 +1,5 @@
-from tkinter import Y
+from turtle import forward
+import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn import datasets
@@ -10,9 +11,11 @@ from load_data import load_data
 import random
 from sklearn.model_selection import train_test_split
 from graphviz import Digraph
+import os
+from datetime import datetime
 
 class RBFNetwork():
-    def __init__(self, hidden_dim=2, kmeans_iter=20, threshold=0.1, n_max_center=100, lr=0.01, epoch=2000, kernel: Kernel = Gaussian()) -> None:
+    def __init__(self, hidden_dim=2, kmeans_iter=20, threshold=0.1, n_max_center=100, lr=0.5, epoch=2000, epoch_p=100, kernel: Kernel = Gaussian(), root=f'./outputs/{datetime.now().strftime("%Y%m%d%p%I%M%S")}/') -> None:
         self.hidden_dim = hidden_dim
         self.kmeans_iter = kmeans_iter
         self.threshold = threshold
@@ -20,18 +23,11 @@ class RBFNetwork():
         self.epoch = epoch
         self.kernel = kernel
         self.n_max_center = n_max_center
-        self.graph_data = []
-        self.dot = Digraph(comment='Tree')
+        self.root = root
+        self.epoch_p = epoch_p
 
-    def view(self):
-        for node in self.graph_data:
-            self.dot.node(node["index"], node["detail"])
-            if node["parent"]:
-                self.dot.edge(node["parent"], node["index"])
-        self.dot.view()
-        
 
-    def set_center(self, X, y):
+    def add_center(self, X, y):
         kmeans = KMeans(n_clusters=self.hidden_dim, init='k-means++').fit(X)
         new_centers = kmeans.cluster_centers_
         
@@ -41,9 +37,8 @@ class RBFNetwork():
             sigma = self.compute_sigma(X[clusters==idx], center)
             new_sigma.append(sigma)
 
-        labels, _ = pairwise_distances_argmin_min(new_centers, X)
-        new_labels = list(y[labels])
-        return new_centers, new_labels, new_sigma
+        return new_centers, new_sigma
+
 
     def compute_sigma(self, X, center):
         sigma = (1 / len(X) * (np.sum(np.apply_along_axis(np.linalg.norm, 1, (X - center)))))
@@ -51,35 +46,88 @@ class RBFNetwork():
             return 0.1
         return sigma
 
-    def compute_mse(self, X, y, X_c, y_c, new_centers, new_labels, new_sigma):
-        y_forward, _ = self.forward(X, t_centers=new_centers, t_labels=new_labels, t_sigma=new_sigma)
-        mse = mean_squared_error(np.array(y), np.array(y_forward))
-        mse_c = []
-        clusters, _ = pairwise_distances_argmin_min(X_c, new_centers)
-        for ci in range(len(new_centers)):
-            X_ci = X_c[clusters==ci]
-            y_ci = y_c[clusters==ci]
-            if len(X_ci) <= 0: continue
-            y_preds = []
-            for x in X_ci:
-                y_pred = []
-                for idx, center in enumerate(new_centers):
-                    y_pred.append(self.kernel.compute(x, center, new_sigma[idx]))
-                max_rbf_value_idx = np.array(y_pred).argmax(axis=0)
-                y_preds.append(new_labels[max_rbf_value_idx])
 
-            mse_c.append(mean_squared_error(np.array(y_ci), np.array(y_preds)))
-        return mse, mse_c
+    def get_interval_prediction(self, y_forward):
+        interval = np.linspace(0, 1, num=self.output_dim, endpoint=False)
+        # print(f"{interval = }")
+        y_preds = []
+        for idx, f_val in enumerate(y_forward):
+            y_preds.append(interval[interval <= f_val].argmax())
+        return y_preds
+
 
     def initialize_parameters(self, X, y):
         self.output_dim = np.unique(np.array(y), axis=0).size
         self.centers = np.array([])
         self.sigma = []
-        self.labels = []
-        # self.output_dim = np.unique(np.array(y), axis=0).size
-        # self.centers = np.random.random_sample(size=(1, X.shape[1]))
-        # self.weights = list(np.random.random_sample(size=1))
-        # self.sigma = [0.0001]
+
+
+    def cluster_forward(self, ci, X):
+        y_forward = []
+        for x in X:
+            forward = self.kernel.compute(x, self.centers[ci], self.sigma[ci])
+            y_forward.append(forward)
+        return np.array(y_forward)
+
+
+    def cluster_backward(self, ci, X, y_forward, y):
+        center = self.centers[ci]
+        sigma = self.sigma[ci]
+        # v_target = v_target / self.output_dim
+        v_pred = self.get_interval_prediction(y_forward)
+        output_grad = y - v_pred
+        self.centers[ci] = center + self.lr / (sigma ** 2) * ((X - center).T @ (output_grad * y_forward)) 
+        self.sigma[ci] = sigma + self.lr / (sigma ** 3) * np.linalg.norm(X - center, axis=1).reshape(1, -1) @ (output_grad * y_forward)
+
+
+    def vote_predict(self, X):
+        y_pred_list = []
+        for ci in range(len(self.centers)):
+            y_forward = self.cluster_forward(ci, X)
+            y_pred = self.get_interval_prediction(y_forward)
+            y_pred_list.append(y_pred)
+        y_preds = np.array([np.bincount(ai).argmax() for ai in np.array(y_pred_list).T])
+        return y_preds
+        
+        
+    def train_one_epoch(self, X, y, clusters=None):
+        if clusters is not None:
+            for ci in np.unique(np.array(clusters), axis=0):
+                y_forward = self.cluster_forward(ci, X[clusters==ci])
+                self.cluster_backward(ci, X[clusters==ci], y_forward, y[clusters==ci])
+            # for idx, x in enumerate(X):
+            #     y_forward = self.kernel.compute(x, self.centers[clusters[idx]], self.sigma[clusters[idx]])
+            #     self.backward(x.reshape(1, -1), y_forward, y[idx])
+
+
+        # 每個群心對全部
+        # for ci in range(len(self.centers)):
+        #     y_forward = self.cluster_forward(ci, X)
+        #     self.cluster_backward(ci, X, y_forward, y)
+        
+        # # 每個群心對該群更新
+        # clusters, _ = pairwise_distances_argmin_min(X, self.centers)
+        # for ci in range(len(self.centers)):
+        #     y_forward = self.cluster_forward(ci, X[clusters==ci])
+        #     self.cluster_backward(ci, X[clusters==ci], y_forward, y[clusters==ci])
+        
+        # 每群有outputdim個std去更新
+        # clusters, _ = pairwise_distances_argmin_min(X, self.centers)
+        # for ci in range(len(self.centers)):
+        #     y_forward = self.cluster_forward(ci, X[clusters==ci])
+        #     for class_idx in range(self.output_dim):
+        #         self.cluster_backward(ci, class_idx, X[clusters==ci], y_forward[class_idx], y[clusters==ci][class_idx])
+       
+        # # 一個接一個
+        # all_index = np.arange(len(X))
+        # np.random.shuffle(all_index)
+        # for ri in all_index:
+            
+        #     xi = X[ri].reshape(1, -1)
+        #     yi = y[ri]
+        #     y_forward = self.forward(xi)
+        #     self.backward(xi, y_forward[0], yi)
+
 
     def train(self, X, y):
         self.initialize_parameters(X, y)
@@ -88,140 +136,122 @@ class RBFNetwork():
         node_index = [0]
         layer = 0
 
-        if len(self.graph_data) == 0:
-            data_info = f"n_feature: {X.shape[1]}\nsamples: {X.shape[0]}"
-            self.graph_data.append({"index" : str(0), "detail" : data_info, "parent" : None})
-
         while train_data and self.n_max_center > self.centers.shape[0]:
             print(f"=============={layer = }==============")
             next_data = []
-            next_node_index = []
             for data, ni in zip(train_data, node_index):
                 X_train, y_train = data[0], data[1]
-                min_mse = float('inf')
-                min_new_centers = None
-                min_new_labels = None
-                min_new_sigma = None
-                min_mse_c = None
-                print(f"{X_train.shape = }, {y_train.shape = }")
-                for _ in range(self.epoch):
-                    if X_train.shape[0] < self.hidden_dim: continue
-                    new_centers, new_labels, new_sigma = self.set_center(X_train, y_train)
-                    mse, mse_c = self.compute_mse(X, y, X_train, y_train, new_centers, new_labels, new_sigma)
-                    print(f"{mse = }")
-                    if mse > min_mse: continue
-                    min_mse = mse
-                    min_new_centers = new_centers
-                    min_new_labels = new_labels
-                    min_new_sigma = new_sigma
-                    min_mse_c = mse_c
+                # print(f"{X_train.shape = }, {y_train.shape = }")
                 
-                if min_new_centers is None: continue
-                # 同批資料但經過幾次iter找到較佳結果才更新到參數上
-                try:
-                    self.centers = np.concatenate((self.centers, min_new_centers)) if self.centers.size > 0 else min_new_centers
-                except ValueError as e:
-                    print(f"{self.centers.shape = }")
-                    print(f"{min_new_centers.shape = }")
-                    raise e
-                self.labels += min_new_labels
-                self.sigma += min_new_sigma
-                if(len(self.centers) > self.n_max_center):break
+                if X_train.shape[0] < self.hidden_dim: continue
+                new_centers, new_sigma = self.add_center(X_train, y_train)
+            
+                self.centers = np.concatenate((self.centers, new_centers)) if self.centers.size > 0 else new_centers
+                self.sigma += new_sigma
 
-                
-                clusters, _ = pairwise_distances_argmin_min(X_train, min_new_centers)
-                n_current = len(self.graph_data)
-                for ci in range(len(min_new_centers)):
-                    center_info = list(np.around(np.array(min_new_centers[ci]), 2))
-                    center_mse = min_mse_c[ci]
-                    n_sample = X_train[clusters==ci].shape[0]
-                    node_detail = f"center: {center_info[0]}...{center_info[-1]}\nmse: {center_mse}\nsamples: {n_sample}"
-                    self.graph_data.append({"index" : str(n_current), "detail" : node_detail, "parent" : str(ni)})
-                    n_current += 1
+                clusters, _ = pairwise_distances_argmin_min(X_train, self.centers)
 
-                for ci, mse_c in enumerate(min_mse_c):
-                    enough = mse_c < self.threshold
-                    if not enough:
-                        next_data.append([X_train[clusters==ci], y_train[clusters==ci]])
-                        next_node_index.append(len(self.graph_data) - len(min_mse_c) + ci)
-                if min_mse <= self.threshold: break
+                self.file_name = 0
+                for i in tqdm.tqdm(range(self.epoch_p)):
+                    self.train_one_epoch(X_train, y_train, clusters=clusters)
+                    if i % 100 == 0:
+                        self.draw_graph(X, y, str(i)) 
+
+                if(len(self.centers) > self.n_max_center): break
+    
+                for ci in range(len(self.centers)):
+                    xci = X_train[clusters==ci]
+                    yci = y_train[clusters==ci]
+                    if xci.size == 0: continue
+                    ycif = self.predict(xci)
+                    yciacc = accuracy_score(yci, ycif)
+                    print(f"{self.centers[ci]}, {np.unique(np.array(yci), axis=0) = }, {yciacc = }")
+                print("======================")
+
                 print(f"current n centers: {len(self.centers)}")
             train_data = next_data
-            node_index = next_node_index
-            cur_mse, _ = self.compute_mse(X, y, X_train, y_train, self.centers, self.labels, self.sigma)
-            if cur_mse <= self.threshold: break
             layer += 1
 
     def fit(self, X, y):
         self.train(X, y)
         return self
 
-    def forward(self, X, t_centers=None, t_labels=None, t_sigma=None):
-        
-        centers = (np.concatenate((self.centers, t_centers)) if self.centers.size > 0 else t_centers) if t_centers is not None else self.centers
-        labels = self.labels + t_labels if t_labels is not None else self.labels
-        sigma = self.sigma + t_sigma if t_sigma is not None else self.sigma
+    def forward(self, X, t_centers=None, t_sigma=None):
+        centers = t_centers if t_centers is not None else self.centers
+        sigma = t_sigma if t_sigma is not None else self.sigma
         y_preds = []
-        y_rbfs = []
+
+        clusters, _ = pairwise_distances_argmin_min(X, centers)
+        # print(clusters)
  
-        for x in X:
-            y_pred = []
-            y_rbf = []
-            for idx, center in enumerate(centers):
-                # y_pred.append(self.kernel.compute(x, center, self.sigma[idx]))
-                rbf = self.kernel.compute(x, center, sigma[idx])
-                # rbf = self.kernel.compute(x, center, self.sigma[idx]) if idx else 1
-                # y_pred += self.weights[idx] * rbf
-                y_pred.append(rbf)
-                y_rbf.append(rbf)
-            y_pred_max = np.array(y_pred).argmax()
-            # interval = np.linspace(0, 1, num=self.output_dim, endpoint=False)
-            # y_pred = interval[interval <= y_pred].argmax() if y_pred > 0 else 0
-            # y_preds.append(y_pred)
-            y_preds.append(labels[y_pred_max])
-            y_rbfs.append(y_rbf)
-        return y_preds, y_rbfs
+        for idx, x in enumerate(X):
+            rbf = self.kernel.compute(x, centers[clusters[idx]], sigma[clusters[idx]])
+            y_preds.append(rbf)
+        return y_preds
 
-    def predict(self, X):
-        y_forward, _ = self.forward(X)
-        return y_forward
+    def backward(self, x, y_forward, y):
         
+        clusters, _ = pairwise_distances_argmin_min(x, self.centers)
+        center = self.centers[clusters[0]]
+        sigma = self.sigma[clusters[0]]
+        # y = y / self.output_dim
+        y_pred = self.get_interval_prediction([y_forward])
+        self.centers[clusters[0]] = center + self.lr * (y - y_pred) * y_forward * (x - center) / (sigma ** 2) 
+        self.sigma[clusters[0]] = sigma + self.lr * (y - y_pred) * y_forward * np.linalg.norm(x - center) / (sigma ** 3)
+        # self.centers[clusters[0]] = center + self.lr * (y - y_forward) * y_forward * (x - center) / (sigma ** 2) 
+        # self.sigma[clusters[0]] = sigma + self.lr * (y - y_forward) * y_forward * np.linalg.norm(x - center) / (sigma ** 3)
+        
+    def predict(self, X):
+        y_forward = self.forward(X)
+        y_pred = self.get_interval_prediction(y_forward)
+        return y_pred
 
+
+    def draw_graph(self, X, y, file_name, file_type='.png'):
+        if not os.path.exists(self.root):
+            os.makedirs(self.root)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        plt.xlabel("X0", fontsize=20)
+        plt.ylabel("X1", fontsize=20) 
+        plt.scatter(X[:,0], X[:,1], s=60, c=y)
+        plt.scatter(self.centers[:,0], self.centers[:,1], s=60, c='r')
+        for i, r in enumerate(self.sigma):
+            draw_circle = plt.Circle(list(self.centers)[i], r, fill=False)
+            ax.add_artist(draw_circle)
+        plt.savefig(self.root + file_name + file_type)
+    
+        
 def main():
-    # X, y = datasets.make_moons(200, noise=0.3, random_state=42)
-    
-    X = np.array([[1, 1], [2, 1], [1, 2], [2, 2], [4, 4], [5, 4], [4, 5], [5, 5]])
-    y = np.array([0, 0, 0, 0, 1, 1, 1, 1])
-    X_test = np.array([[1.5, 1], [1.5, 2], [4.5, 4], [4.5, 5], [1.5, 1.5], [1, 1], [2, 1], [1, 2], [2, 2], [4, 4], [5, 4], [4, 5], [5, 5]])
-    y_test = np.array([0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1])
+    n_samples, n_classes, hidden_dim, epoch_p, lr = 300, 3, 2, 2000, 0.1 
+    X, y = datasets.make_blobs(n_samples=n_samples, random_state=42, centers=n_classes)
 
-    # X, X_test, y, y_test = load_data('ICU', onehot=False)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20)
+    # X_train = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
+    # y_train = np.array([1, 0, 0, 1])
+    # X, y = X_train, y_train
 
-    fig, ax = plt.subplots(figsize=(6, 6))
-    rbfn = RBFNetwork(hidden_dim=10, n_max_center=200, threshold=0.1, epoch=10, lr=0.01)
-    rbfn = rbfn.fit(X, y)
-    
-    # rbfn.view()
-    # print(f"{y_preds = }")
-    print(f"{len(rbfn.centers) = }")
+    root = f'D:/Applications/vscode/workspace/JMLM/outputs/ns{n_samples}nc{n_classes}hd{hidden_dim}epoch{epoch_p}lr{lr}t{datetime.now().strftime("%Y%m%d%p%I%M%S")}/'
 
-    y_train_preds = rbfn.predict(X)
-    train_acc = accuracy_score(y, y_train_preds)
+    rbfn = RBFNetwork(hidden_dim=hidden_dim, n_max_center=200, threshold=0.1, epoch=10, epoch_p=epoch_p, lr=lr, root=root)
+    rbfn = rbfn.fit(X_train, y_train)
+
+    y_train_preds = rbfn.predict(X_train)
+    # print(f"{y_train_preds = }")
+    train_acc = accuracy_score(y_train, y_train_preds)
     print(f"{train_acc = }")
     y_test_preds = rbfn.predict(X_test)
     test_acc = accuracy_score(y_test, y_test_preds)
     print(f"{test_acc = }")
 
-    plt.xlabel("X0", fontsize=20)
-    plt.ylabel("X1", fontsize=20) 
-    plt.scatter(X[:,0], X[:,1], s=60, c=y)
-    plt.scatter(rbfn.centers[:,0], rbfn.centers[:,1], s=60, c='r')
-    for i, r in enumerate(rbfn.sigma):
-        draw_circle = plt.Circle(list(rbfn.centers)[i], r, fill=False)
-        ax.add_artist(draw_circle)
-    plt.show()
-    plt.savefig('D:/Applications/vscode/workspace/JMLM/outputs/rbfn.png')
+    y_vote_preds = rbfn.vote_predict(X_train)
+    vote_train_acc = accuracy_score(y_train, y_vote_preds)
+    print(f"{vote_train_acc = }")
 
+    y_test_vote_preds = rbfn.vote_predict(X_test)
+    vote_test_acc = accuracy_score(y_test, y_test_vote_preds)
+    print(f"{vote_test_acc = }")
 
+    rbfn.draw_graph(X, y, f'final_train_acc{train_acc}_test_acc{test_acc}')
+ 
 if __name__ == "__main__":
     main()
