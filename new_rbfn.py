@@ -100,7 +100,7 @@ class RBFNetwork():
             #     self.backward(x.reshape(1, -1), y_forward, y[idx])
 
 
-        # 每個群心對全部
+        # # 每個群心對全部
         # for ci in range(len(self.centers)):
         #     y_forward = self.cluster_forward(ci, X)
         #     self.cluster_backward(ci, X, y_forward, y)
@@ -153,6 +153,7 @@ class RBFNetwork():
 
                 self.file_name = 0
                 for i in tqdm.tqdm(range(self.epoch_p)):
+                    # self.train_one_epoch(X_train, y_train)
                     self.train_one_epoch(X_train, y_train, clusters=clusters)
                     if i % 100 == 0:
                         self.draw_graph(X, y, str(i)) 
@@ -219,11 +220,13 @@ class RBFNetwork():
             draw_circle = plt.Circle(list(self.centers)[i], r, fill=False)
             ax.add_artist(draw_circle)
         plt.savefig(self.root + file_name + file_type)
+        plt.close(fig)
     
         
-def main():
-    n_samples, n_classes, hidden_dim, epoch_p, lr = 300, 3, 2, 2000, 0.1 
-    X, y = datasets.make_blobs(n_samples=n_samples, random_state=42, centers=n_classes)
+def main(n_samples, n_classes, hidden_dim, epoch_p, lr, std):
+    result = f""
+    result += f"{n_samples = }\n{n_classes = }\n{hidden_dim = }\n{epoch_p = }\n"
+    X, y = datasets.make_blobs(n_samples=n_samples, random_state=42, centers=n_classes, cluster_std=std)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20)
     # X_train = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
@@ -234,24 +237,38 @@ def main():
 
     rbfn = RBFNetwork(hidden_dim=hidden_dim, n_max_center=200, threshold=0.1, epoch=10, epoch_p=epoch_p, lr=lr, root=root)
     rbfn = rbfn.fit(X_train, y_train)
-
+    
     y_train_preds = rbfn.predict(X_train)
     # print(f"{y_train_preds = }")
     train_acc = accuracy_score(y_train, y_train_preds)
-    print(f"{train_acc = }")
+    result += f"{train_acc = }\n"
     y_test_preds = rbfn.predict(X_test)
     test_acc = accuracy_score(y_test, y_test_preds)
-    print(f"{test_acc = }")
+    result += f"{test_acc = }\n"
 
     y_vote_preds = rbfn.vote_predict(X_train)
     vote_train_acc = accuracy_score(y_train, y_vote_preds)
-    print(f"{vote_train_acc = }")
+    result += f"{vote_train_acc = }\n"
 
     y_test_vote_preds = rbfn.vote_predict(X_test)
     vote_test_acc = accuracy_score(y_test, y_test_vote_preds)
-    print(f"{vote_test_acc = }")
+    result += f"{vote_test_acc = }\n"
+    print(result)
+    f = open(root + "acc.txt", "w")
+    f.write(result)
+    f.close()
 
     rbfn.draw_graph(X, y, f'final_train_acc{train_acc}_test_acc{test_acc}')
  
 if __name__ == "__main__":
-    main()
+    n_samples, n_classes, hidden_dim, epoch_p, lr, std = 300, 3, 8, 2000, 0.1, 1
+    main(n_samples, n_classes, hidden_dim, epoch_p, lr, std)
+    # for i in range(2, 10):
+    #     main(n_samples, n_classes, i, epoch_p, lr, std)
+
+    # for i in range(3, 10):
+    #     for j in range(i-1, 10):
+    #         main(n_samples, i, j, epoch_p, lr, std)
+
+    # for s in range(1, 5):
+    #     main(n_samples, n_classes, 5, epoch_p, lr, s)
