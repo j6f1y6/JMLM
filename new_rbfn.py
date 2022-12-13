@@ -13,9 +13,10 @@ from sklearn.model_selection import train_test_split
 from graphviz import Digraph
 import os
 from datetime import datetime
+from sklearn.decomposition import PCA
 
 class RBFNetwork():
-    def __init__(self, hidden_dim=2, kmeans_iter=20, threshold=0.1, n_max_center=100, lr=0.5, epoch=2000, epoch_p=100, kernel: Kernel = Gaussian(), root=f'./outputs/{datetime.now().strftime("%Y%m%d%p%I%M%S")}/') -> None:
+    def __init__(self, hidden_dim=2, kmeans_iter=20, threshold=0.1, n_max_center=100, lr=0.5, epoch=2000, epoch_p=100, kernel: Kernel = Gaussian(), root=f'./outputs/{datetime.now().strftime("%Y%m%d%p%I%M%S")}/', data_type=0, update_type=0, pca=None) -> None:
         self.hidden_dim = hidden_dim
         self.kmeans_iter = kmeans_iter
         self.threshold = threshold
@@ -25,6 +26,9 @@ class RBFNetwork():
         self.n_max_center = n_max_center
         self.root = root
         self.epoch_p = epoch_p
+        self.data_type = data_type
+        self.update_type = update_type
+        self.pca=pca
 
 
     def add_center(self, X, y):
@@ -74,8 +78,9 @@ class RBFNetwork():
         center = self.centers[ci]
         sigma = self.sigma[ci]
         # v_target = v_target / self.output_dim
-        v_pred = self.get_interval_prediction(y_forward)
-        output_grad = y - v_pred
+        y_pred = self.get_interval_prediction(y_forward)
+        # output_grad = y - y_pred
+        output_grad = y_pred - y
         self.centers[ci] = center + self.lr / (sigma ** 2) * ((X - center).T @ (output_grad * y_forward)) 
         self.sigma[ci] = sigma + self.lr / (sigma ** 3) * np.linalg.norm(X - center, axis=1).reshape(1, -1) @ (output_grad * y_forward)
 
@@ -91,47 +96,52 @@ class RBFNetwork():
         
         
     def train_one_epoch(self, X, y, clusters=None):
-        if clusters is not None:
-            for ci in np.unique(np.array(clusters), axis=0):
-                y_forward = self.cluster_forward(ci, X[clusters==ci])
-                self.cluster_backward(ci, X[clusters==ci], y_forward, y[clusters==ci])
-            # for idx, x in enumerate(X):
-            #     y_forward = self.kernel.compute(x, self.centers[clusters[idx]], self.sigma[clusters[idx]])
-            #     self.backward(x.reshape(1, -1), y_forward, y[idx])
+        for ci in range(len(self.centers)):
+            X_c = X if self.data_type == 2 else X[clusters==ci]
+            y_c = y if self.data_type == 2 else y[clusters==ci]
+            if self.update_type == 0:
+                all_index = np.arange(len(X_c))
+                np.random.shuffle(all_index)
+                for ri in all_index:
+                    
+                    xi = X_c[ri].reshape(1, -1)
+                    yi = y_c[ri]
+                    y_forward = self.kernel.compute(xi, self.centers[ci], self.sigma[ci])
+                    self.backward(xi, y_forward, yi, ci)
 
 
-        # # 每個群心對全部
-        # for ci in range(len(self.centers)):
-        #     y_forward = self.cluster_forward(ci, X)
-        #     self.cluster_backward(ci, X, y_forward, y)
-        
-        # # 每個群心對該群更新
-        # clusters, _ = pairwise_distances_argmin_min(X, self.centers)
-        # for ci in range(len(self.centers)):
-        #     y_forward = self.cluster_forward(ci, X[clusters==ci])
-        #     self.cluster_backward(ci, X[clusters==ci], y_forward, y[clusters==ci])
-        
+            elif self.update_type == 1:
+                    y_forward = self.cluster_forward(ci, X_c)
+                    self.cluster_backward(ci, X_c, y_forward, y_c)
+
         # 每群有outputdim個std去更新
         # clusters, _ = pairwise_distances_argmin_min(X, self.centers)
         # for ci in range(len(self.centers)):
         #     y_forward = self.cluster_forward(ci, X[clusters==ci])
         #     for class_idx in range(self.output_dim):
         #         self.cluster_backward(ci, class_idx, X[clusters==ci], y_forward[class_idx], y[clusters==ci][class_idx])
-       
-        # # 一個接一個
-        # all_index = np.arange(len(X))
-        # np.random.shuffle(all_index)
-        # for ri in all_index:
-            
-        #     xi = X[ri].reshape(1, -1)
-        #     yi = y[ri]
-        #     y_forward = self.forward(xi)
-        #     self.backward(xi, y_forward[0], yi)
+
+    def get_mse(self, X, y, clusters):
+        # mse = float('inf')
+        y_forward = self.predict(X)
+        mse = mean_squared_error(y, y_forward)
+
+        mse_p = []
+        for ci in range(len(self.centers)):
+            xci = X[clusters==ci]
+            yci = y[clusters==ci]
+            if xci.shape[0] == 0:
+                mse_p.append(0)
+                continue
+            yci_forward = self.predict(xci)
+            mse_p.append(mean_squared_error(yci, yci_forward))
+        return mse, mse_p
 
 
     def train(self, X, y):
         self.initialize_parameters(X, y)
         X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2)
+        X_train, y_train = X, y
         train_data = [[X_train, y_train]]
         node_index = [0]
         layer = 0
@@ -139,37 +149,58 @@ class RBFNetwork():
         while train_data and self.n_max_center > self.centers.shape[0]:
             print(f"=============={layer = }==============")
             next_data = []
+            print(f"{len(train_data) = }")
             for data, ni in zip(train_data, node_index):
-                X_train, y_train = data[0], data[1]
-                # print(f"{X_train.shape = }, {y_train.shape = }")
+                X_part, y_part = data[0], data[1]
+                # print(f"{X_part.shape = }, {y_part.shape = }")
                 
-                if X_train.shape[0] < self.hidden_dim: continue
-                new_centers, new_sigma = self.add_center(X_train, y_train)
+                if X_part.shape[0] < self.hidden_dim: continue
+                new_centers, new_sigma = self.add_center(X_part, y_part)
             
                 self.centers = np.concatenate((self.centers, new_centers)) if self.centers.size > 0 else new_centers
                 self.sigma += new_sigma
 
-                clusters, _ = pairwise_distances_argmin_min(X_train, self.centers)
-
-                self.file_name = 0
-                for i in tqdm.tqdm(range(self.epoch_p)):
-                    # self.train_one_epoch(X_train, y_train)
-                    self.train_one_epoch(X_train, y_train, clusters=clusters)
-                    if i % 100 == 0:
+            clusters, _ = pairwise_distances_argmin_min(X_train, self.centers)
+            
+            self.file_name = 0
+            for i in tqdm.tqdm(range(self.epoch_p)):
+                if self.data_type == 1:
+                    clusters, _ = pairwise_distances_argmin_min(X_train, self.centers)
+                elif self.data_type == 2:
+                    clusters = None
+                
+                # if i % 100 == 0:
+                if True:
+                    if self.pca is not None:
+                        X_pca = self.pca.transform(X)
+                        self.draw_graph(X_pca, y, str(i)) 
+                        pass
+                    else:
                         self.draw_graph(X, y, str(i)) 
 
-                if(len(self.centers) > self.n_max_center): break
-    
-                for ci in range(len(self.centers)):
-                    xci = X_train[clusters==ci]
-                    yci = y_train[clusters==ci]
-                    if xci.size == 0: continue
-                    ycif = self.predict(xci)
-                    yciacc = accuracy_score(yci, ycif)
-                    print(f"{self.centers[ci]}, {np.unique(np.array(yci), axis=0) = }, {yciacc = }")
-                print("======================")
+                self.train_one_epoch(X_train, y_train, clusters=clusters)
 
-                print(f"current n centers: {len(self.centers)}")
+            # mse, mse_p = self.get_mse(X_train, y_train, clusters)
+            # print(f"{mse = }")
+
+            # if(len(self.centers) > self.n_max_center): break
+
+            # threshold = 0.3
+
+            # for ci in range(len(self.centers)):
+            #     xci = X_train[clusters==ci]
+            #     yci = y_train[clusters==ci]
+            #     if xci.size == 0: continue
+            #     ycif = self.predict(xci)
+            #     yciacc = accuracy_score(yci, ycif)
+            #     element = np.unique(np.array(yci), axis=0)
+            #     n_X = xci.shape[0]
+            #     print(f"{self.centers[ci]}, {element = }, {yciacc = }, {mse_p[ci] = }, {n_X = }")
+            #     if mse_p[ci] > threshold:
+            #         next_data.append([xci, yci])
+            # print("======================")
+
+            print(f"current n centers: {len(self.centers)}")
             train_data = next_data
             layer += 1
 
@@ -177,12 +208,12 @@ class RBFNetwork():
         self.train(X, y)
         return self
 
-    def forward(self, X, t_centers=None, t_sigma=None):
+    def forward(self, X, t_centers=None, t_sigma=None, clusters=None):
         centers = t_centers if t_centers is not None else self.centers
         sigma = t_sigma if t_sigma is not None else self.sigma
         y_preds = []
-
-        clusters, _ = pairwise_distances_argmin_min(X, centers)
+        if clusters is None:
+            clusters, _ = pairwise_distances_argmin_min(X, centers)
         # print(clusters)
  
         for idx, x in enumerate(X):
@@ -190,18 +221,17 @@ class RBFNetwork():
             y_preds.append(rbf)
         return y_preds
 
-    def backward(self, x, y_forward, y):
-        
-        clusters, _ = pairwise_distances_argmin_min(x, self.centers)
-        center = self.centers[clusters[0]]
-        sigma = self.sigma[clusters[0]]
-        # y = y / self.output_dim
+    def backward(self, x, y_forward, y, ci):
+        center = self.centers[ci]
+        sigma = self.sigma[ci]
         y_pred = self.get_interval_prediction([y_forward])
-        self.centers[clusters[0]] = center + self.lr * (y - y_pred) * y_forward * (x - center) / (sigma ** 2) 
-        self.sigma[clusters[0]] = sigma + self.lr * (y - y_pred) * y_forward * np.linalg.norm(x - center) / (sigma ** 3)
-        # self.centers[clusters[0]] = center + self.lr * (y - y_forward) * y_forward * (x - center) / (sigma ** 2) 
-        # self.sigma[clusters[0]] = sigma + self.lr * (y - y_forward) * y_forward * np.linalg.norm(x - center) / (sigma ** 3)
+        grad = y - y_pred
+        d_center = grad * y_forward * (x - center) / (sigma ** 2)
+        d_sigma = grad * y_forward * np.linalg.norm(x - center)**2 / (sigma ** 3)
+        self.centers[ci] = center + self.lr * d_center
+        self.sigma[ci] = sigma + self.lr * d_sigma
         
+
     def predict(self, X):
         y_forward = self.forward(X)
         y_pred = self.get_interval_prediction(y_forward)
@@ -215,27 +245,42 @@ class RBFNetwork():
         plt.xlabel("X0", fontsize=20)
         plt.ylabel("X1", fontsize=20) 
         plt.scatter(X[:,0], X[:,1], s=60, c=y)
-        plt.scatter(self.centers[:,0], self.centers[:,1], s=60, c='r')
-        for i, r in enumerate(self.sigma):
-            draw_circle = plt.Circle(list(self.centers)[i], r, fill=False)
+        centers = self.centers if self.pca is None else self.pca.transform(self.centers)
+        plt.scatter(centers[:,0], centers[:,1], s=60, c='r')
+        for sigma, center in zip(self.sigma, centers):
+            draw_circle = plt.Circle(center, sigma, fill=False)
             ax.add_artist(draw_circle)
+        # for i, r in enumerate(self.sigma):
+        #     # draw_circle = plt.Circle(list(self.centers)[i], r, fill=False)
+        #     draw_circle = plt.Circle(self.centers[i], r, fill=False)
+        #     ax.add_artist(draw_circle)
         plt.savefig(self.root + file_name + file_type)
         plt.close(fig)
+        
     
         
-def main(n_samples, n_classes, hidden_dim, epoch_p, lr, std):
+def main(n_samples, n_classes, hidden_dim, epoch_p, lr, std, data_type, update_type, root):
+    data_type_list = {0: "fixed", 1: "updated", 2: "all"}
+    update_type_list = {0: "one", 1: "cluster"}
     result = f""
-    result += f"{n_samples = }\n{n_classes = }\n{hidden_dim = }\n{epoch_p = }\n"
+    result += f"{data_type_list[data_type] = }\n{update_type_list[update_type] = }\n{n_samples = }\n{n_classes = }\n{hidden_dim = }\n{epoch_p = }\n"
     X, y = datasets.make_blobs(n_samples=n_samples, random_state=42, centers=n_classes, cluster_std=std)
-
+    draw_X, draw_y = X, y
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20)
+
+    dataset = 'ICU'
+    X_train, X_test, y_train, y_test = load_data(dataset, onehot=False)
+    pca = PCA(n_components=2)
+    pca.fit(X_train)
     # X_train = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
     # y_train = np.array([1, 0, 0, 1])
     # X, y = X_train, y_train
 
-    root = f'D:/Applications/vscode/workspace/JMLM/outputs/ns{n_samples}nc{n_classes}hd{hidden_dim}epoch{epoch_p}lr{lr}t{datetime.now().strftime("%Y%m%d%p%I%M%S")}/'
+    
 
-    rbfn = RBFNetwork(hidden_dim=hidden_dim, n_max_center=200, threshold=0.1, epoch=10, epoch_p=epoch_p, lr=lr, root=root)
+
+    rbfn = RBFNetwork(hidden_dim=hidden_dim, n_max_center=20, threshold=0.1, epoch=10, epoch_p=epoch_p, lr=lr, root=root, data_type=data_type, update_type=update_type, pca=pca)
+    # rbfn = rbfn.fit(X, y)
     rbfn = rbfn.fit(X_train, y_train)
     
     y_train_preds = rbfn.predict(X_train)
@@ -258,17 +303,39 @@ def main(n_samples, n_classes, hidden_dim, epoch_p, lr, std):
     f.write(result)
     f.close()
 
-    rbfn.draw_graph(X, y, f'final_train_acc{train_acc}_test_acc{test_acc}')
+    # rbfn.draw_graph(draw_X, draw_y, f'final')
+    rbfn.draw_graph(draw_X, draw_y, f'final')
  
 if __name__ == "__main__":
-    n_samples, n_classes, hidden_dim, epoch_p, lr, std = 300, 3, 8, 2000, 0.1, 1
-    main(n_samples, n_classes, hidden_dim, epoch_p, lr, std)
-    # for i in range(2, 10):
-    #     main(n_samples, n_classes, i, epoch_p, lr, std)
+    n_samples, n_classes, hidden_dim, epoch_p, lr, std = 1000, 6, 5 , 100, 0.5, 1
+    # data_type_list = {0: "fixed", 1: "updated", 2: "all"}
+    # update_type_list = {0: "one", 1: "cluster"}
+    data_type = 1
+    update_type = 0
+    root = f'D:/Applications/vscode/workspace/JMLM/outputs/'
+    # final_dir = f'ns{n_samples}nc{n_classes}hd{hidden_dim}epoch{epoch_p}lr{lr}t{datetime.now().strftime("%Y%m%d%p%I%M%S")}/'
+    # main(n_samples, n_classes, hidden_dim, epoch_p, lr, std, data_type, update_type, root + final_dir)
 
-    # for i in range(3, 10):
-    #     for j in range(i-1, 10):
-    #         main(n_samples, i, j, epoch_p, lr, std)
+    tmp_dir = root + f"ICU/"
+    if not os.path.exists(tmp_dir):
+        os.makedirs(tmp_dir)
+    for n_center in range(1, 20):
+        tmp_center_dir = tmp_dir + f'center_{n_center}/'
+        if not os.path.exists(tmp_center_dir):
+            os.makedirs(tmp_center_dir)
+        for epoch in range(500, 1001, 500):
+            final_dir = f'hd{n_center}epoch{epoch}lr{lr}t{datetime.now().strftime("%Y%m%d%p%I%M%S")}/'
+            main(n_samples, n_classes, n_center, epoch, lr, std, data_type, update_type, tmp_center_dir + final_dir)
+    # for n_class in range(3, 10):
+    #     tmp_dir = root + f'class_{n_class}/'
+    #     if not os.path.exists(tmp_dir):
+    #         os.makedirs(tmp_dir)
+    #     for n_center in range(1, 20):
+    #         tmp_center_dir = tmp_dir + f'center_{n_center}/'
+    #         if not os.path.exists(tmp_center_dir):
+    #             os.makedirs(tmp_center_dir)
+    #         for epoch in range(500, 1001, 500):
+    #             final_dir = f'ns{n_samples}nc{n_class}hd{n_center}epoch{epoch}lr{lr}t{datetime.now().strftime("%Y%m%d%p%I%M%S")}/'
+    #             main(n_samples, n_class, n_center, epoch, lr, std, data_type, update_type, tmp_center_dir + final_dir)
 
-    # for s in range(1, 5):
-    #     main(n_samples, n_classes, 5, epoch_p, lr, s)
+    

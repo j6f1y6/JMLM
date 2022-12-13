@@ -35,7 +35,7 @@ def add_gaussian_noise(X_imgs):
     return np.array(gaussian_noise_imgs, dtype = np.float32)
 
 
-def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False, noise=False):
+def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False, noise=False, asmpt_target=0, classification=True):
     if dataset == "iris_test":
         data = pd.read_csv("D:/Applications/vscode/workspace/JMLM/datasets/Iris/Iris.csv")
         X = data[['SepalLengthCm', 'SepalWidthCm', 'PetalLengthCm', 'PetalWidthCm']].to_numpy()
@@ -109,6 +109,15 @@ def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False, noise=
         # y_train = np.ravel(y_train)
         # y_test = np.ravel(y_test)
 
+    elif dataset == "asmpt_train":
+        data = pd.read_csv("D:/Applications/vscode/workspace/JMLM/datasets/asmpt/Train.csv")
+        Train_data = data.loc[data['TrainTest'] == 'Train']
+        Test_data = data.loc[data['TrainTest'] == 'Test']
+        X_train = Train_data.loc[:,Train_data.columns.str.startswith('feature_')].to_numpy()
+        y_train = Train_data['target_' + str(asmpt_target)].to_numpy()
+        X_test = Test_data.loc[:,Test_data.columns.str.startswith('feature_')].to_numpy()
+        y_test = Test_data['target_' + str(asmpt_target)].to_numpy()
+
     X_train = X_train.reshape(-1, math.prod(X_train.shape[1:]))
     X_test = X_test.reshape(-1, math.prod(X_train.shape[1:]))
     if normalization:
@@ -117,9 +126,10 @@ def load_data(dataset, onehot=True, normalization=True, pca=1, lda=False, noise=
         X_test = scaler.transform(X_test)
 
 
-    labelencoder = LabelEncoder()
-    y_train = labelencoder.fit_transform(y_train)
-    y_test = labelencoder.transform(y_test)
+    if classification:
+        labelencoder = LabelEncoder()
+        y_train = labelencoder.fit_transform(y_train)
+        y_test = labelencoder.transform(y_test)
 
     if onehot:
         onehotencoder = OneHotEncoder()

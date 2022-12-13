@@ -19,15 +19,6 @@ from load_data import load_data
 os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin'
 logging.getLogger('matplotlib.font_manager').disabled = True
 
-# wandb.init(project="my-test-project")
-
-# wandb.config = {
-# #   "learning_rate": 0.001,
-# #   "epochs": 100,
-# #   "batch_size": 128
-#     "max_centers": 100,
-#     "threshold": 0.01
-# }
 
 class JMLM():
     def __init__(self) -> None:
@@ -193,6 +184,7 @@ class JMLM():
         n_parent = str(n_current_node)
         n_current = len(self.graph_data)
         clusters, _ = pairwise_distances_argmin_min(X_kmeans, target_points)
+        print(X_kmeans.shape)
         for ci in range(len(target_points)):
             X_ci = X_kmeans[clusters==ci]
             node_detail = f"center: {list(np.around(np.array(target_points[ci]), 2))}\nmse: {target_partial_mse[ci]}\nsamples: {X_ci.shape[0]}"
@@ -321,7 +313,7 @@ def main():
     logging.info(f"===============Execution: JMLM===============")
     types = ["JMLM", "Deep", "old"]
     training_type = "JMLM"
-    dataset = "mnist"
+    dataset = "ICU"
     n_max_node = 10
     threshold = 0.01
     to_max = False
