@@ -37,7 +37,7 @@ class JMLM():
                 points, d_points = self.clustering(X_kmeans, y_kmeans, n_point)
                 jacobians = self.computing_jacobian(X, y, points, d_points)
                 # mse = self.get_mse(X, y, points, d_points, jacobians)
-                mse = self.get_mse(X_valid, y_valid, points, d_points, jacobians)
+                mse, partial_mse = self.get_mse(X_valid, y_valid, points, d_points, jacobians)
                 mse_list.append(mse)
 
                 logging.info(f"{n_point = } MSE: {mse}")
@@ -55,6 +55,55 @@ class JMLM():
         self.d_points += target_d_points.tolist()
         self.jacobians += target_jacobians
         logging.info(f"final num of center: {len(self.points)}")
+        
+  
+    def deep_train(self, X, y, max_points=10, layer_max_node=3, threshold=0.1, kmeans_iter=20):
+        X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2)
+        
+        training_data = [[X_train, y_train]]
+        min_mse = float('inf')
+        layer = 0
+        
+        while training_data and len(self.points) < max_points:
+            logging.info(f"======Layer {layer}======")
+            next_data = []
+            for data in training_data:
+                X_train = data[0]
+                y_train = data[1]
+                if len(X_train) < layer_max_node: continue
+                points, d_points, jacobians, mse, partial_mse = None, None, None, None, None
+                tmp_min_mse = float('inf')
+                K = 2
+                for layer_node in range(K, layer_max_node + 1):
+                    for _ in range(kmeans_iter):
+                        tmp_points, tmp_d_points = self.clustering(X_train, y_train, layer_node)
+                        tmp_jacobians = self.computing_jacobian(X, y, tmp_points, tmp_d_points)
+                        tmp_mse, tmp_partial_mse = self.get_mse(X_valid, y_valid, points, d_points, jacobians, deep, X_train, y_train)
+                        if tmp_mse <= tmp_min_mse:
+                            tmp_min_mse = tmp_mse
+                            points, d_points, jacobians, mse, partial_mse = tmp_points, tmp_d_points, tmp_jacobians, tmp_mse, tmp_partial_mse
+                if len(self.points) > max_points: break
+
+                self.points += points.tolist()
+                self.d_points += d_points.tolist()
+                self.jacobians += jacobians
+                logging.info(mse)
+                logging.info(partial_mse)
+                
+                clusters, _ = pairwise_distances_argmin_min(X_train, points)
+                for ci, p_mse in enumerate(partial_mse):
+                    enough = p_mse < threshold
+                    if not enough:
+                        next_data.append([X_train[clusters==ci], y_train[clusters==ci]])
+                
+                if mse < threshold:
+                    next_data = []
+                    break
+
+                
+            layer += 1
+            training_data = next_data
+
         
 
     def clustering(self, X_train, y_train, n_clusters):
@@ -76,10 +125,20 @@ class JMLM():
         return jacobians
 
 
-    def get_mse(self, X, y, points, d_points, jacobians):
+    def get_mse(self, X, y, points, d_points, jacobians, deep=False, X_partial=None, y_partial=None):
         y_forward = self.forward(X, train=True, replaced_centers=np.array(self.points + list(points)), d_points=np.array(self.d_points + list(d_points)), jacobians=self.jacobians + jacobians)
         mse = mean_squared_error(np.array(y), y_forward)
-        return mse
+
+        partial_mse = []
+        if deep:
+            clusters, _ = pairwise_distances_argmin_min(X_partial, points)
+            for ci in range(len(points)):
+                X_ci = X_partial[clusters==ci]
+                y_ci = y_partial[clusters==ci]
+                if len(X_ci) <= 0: continue
+                y_forward = self.forward(X_ci, train=True, replaced_centers=points[ci].reshape(1, -1), d_points=d_points[ci].reshape(1, -1), jacobians=[jacobians[ci]])
+                partial_mse.append(mean_squared_error(np.array(y_ci), y_forward))
+        return mse, partial_mse
 
     
     def forward(self, X, train=False, replaced_centers=None, d_points=None, jacobians=None):
@@ -99,10 +158,9 @@ class JMLM():
         return self.forward(X)
 
     
-def main(training_type="JMLM", dataset="asmpt_train", n_max_node=3, threshold=0.01, kmeans_iter=10, asmpt_target=5):
+def main(dataset="asmpt_train", n_max_node=3, threshold=0.01, kmeans_iter=10, asmpt_target=5, deep=False):
     logging.basicConfig(filename='reg_JMLM.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
     logging.info(f"===============Execution: JMLM===============")
-    types = ["JMLM", "Deep"]
 
     X_train, X_test, y_train, y_test = load_data(dataset, onehot=False, normalization=False, asmpt_target=asmpt_target, classification=False)
 
@@ -110,8 +168,12 @@ def main(training_type="JMLM", dataset="asmpt_train", n_max_node=3, threshold=0.
     
     start_time = time.time()
     jmlm = JMLM()
-    if training_type == types[0]:
+    if deep:
+        # jmlm.train(X_train, y_train, X_train, y_train, n_max_node, threshold, False, kmeans_iter)
+        jmlm.deep_train(X_train, y_train, max_points=n_max_node, layer_max_node=3, threshold=threshold, kmeans_iter=kmeans_iter)
+    else:
         jmlm.train(X_train, y_train, X_train, y_train, n_max_node, threshold, False, kmeans_iter)
+    
 
 
     y_train_pred = jmlm.predict(X_train)
@@ -131,12 +193,12 @@ if __name__ == '__main__':
     target = 0
     # main()
     train_mse, test_mse = main(
-                                training_type="JMLM", 
                                 dataset="asmpt_train", 
                                 n_max_node=n_max_node, 
                                 threshold=0.01, 
                                 kmeans_iter=kmeans_iter, 
-                                asmpt_target=target
+                                asmpt_target=target,
+                                deep=deep
                             )
     # targets = list(range(0, 6))
     # n_centers = list(range(1, 21))
@@ -152,12 +214,12 @@ if __name__ == '__main__':
     #         test_mse_list = []
     #         for n_max_node in n_centers:
     #             train_mse, test_mse = main(
-    #                                         training_type="JMLM", 
     #                                         dataset="asmpt_train", 
     #                                         n_max_node=n_max_node, 
     #                                         threshold=0.01, 
     #                                         kmeans_iter=kmeans_iter, 
-    #                                         asmpt_target=target
+    #                                         asmpt_target=target,
+    #                                         deep=deep
     #                                     )
     #             train_mse_list.append(train_mse)
     #             test_mse_list.append(test_mse)
