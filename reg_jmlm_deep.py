@@ -61,7 +61,6 @@ class JMLM():
         X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2)
         
         training_data = [[X_train, y_train]]
-        min_mse = float('inf')
         layer = 0
         
         while training_data and len(self.points) < max_points:
@@ -74,11 +73,11 @@ class JMLM():
                 points, d_points, jacobians, mse, partial_mse = None, None, None, None, None
                 tmp_min_mse = float('inf')
                 K = 2
-                for layer_node in range(K, layer_max_node + 1):
+                for layer_node in tqdm.tqdm(range(K, layer_max_node + 1)):
                     for _ in range(kmeans_iter):
                         tmp_points, tmp_d_points = self.clustering(X_train, y_train, layer_node)
                         tmp_jacobians = self.computing_jacobian(X, y, tmp_points, tmp_d_points)
-                        tmp_mse, tmp_partial_mse = self.get_mse(X_valid, y_valid, points, d_points, jacobians, deep, X_train, y_train)
+                        tmp_mse, tmp_partial_mse = self.get_mse(X_valid, y_valid, tmp_points, tmp_d_points, tmp_jacobians, deep, X_train, y_train)
                         if tmp_mse <= tmp_min_mse:
                             tmp_min_mse = tmp_mse
                             points, d_points, jacobians, mse, partial_mse = tmp_points, tmp_d_points, tmp_jacobians, tmp_mse, tmp_partial_mse
@@ -87,9 +86,9 @@ class JMLM():
                 self.points += points.tolist()
                 self.d_points += d_points.tolist()
                 self.jacobians += jacobians
-                logging.info(mse)
-                logging.info(partial_mse)
-                
+                logging.info(f"{mse = }")
+                logging.info(f"{partial_mse = }")
+                logging.info(f"{len(self.points) = }")
                 clusters, _ = pairwise_distances_argmin_min(X_train, points)
                 for ci, p_mse in enumerate(partial_mse):
                     enough = p_mse < threshold
@@ -158,8 +157,8 @@ class JMLM():
         return self.forward(X)
 
     
-def main(dataset="asmpt_train", n_max_node=3, threshold=0.01, kmeans_iter=10, asmpt_target=5, deep=False):
-    logging.basicConfig(filename='reg_JMLM.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
+def main(dataset="asmpt_train", n_max_node=5, threshold=0.01, kmeans_iter=10, asmpt_target=5, deep=False, layer_max_node=5):
+    logging.basicConfig(filename='reg_JMLM_deep.log', encoding='utf-8', level=logging.DEBUG, format='%(asctime)s %(message)s', datefmt='%Y/%m/%d %p %I:%M:%S')
     logging.info(f"===============Execution: JMLM===============")
 
     X_train, X_test, y_train, y_test = load_data(dataset, onehot=False, normalization=False, asmpt_target=asmpt_target, classification=False)
@@ -170,7 +169,7 @@ def main(dataset="asmpt_train", n_max_node=3, threshold=0.01, kmeans_iter=10, as
     jmlm = JMLM()
     if deep:
         # jmlm.train(X_train, y_train, X_train, y_train, n_max_node, threshold, False, kmeans_iter)
-        jmlm.deep_train(X_train, y_train, max_points=n_max_node, layer_max_node=3, threshold=threshold, kmeans_iter=kmeans_iter)
+        jmlm.deep_train(X_train, y_train, max_points=n_max_node, layer_max_node=layer_max_node, threshold=threshold, kmeans_iter=kmeans_iter)
     else:
         jmlm.train(X_train, y_train, X_train, y_train, n_max_node, threshold, False, kmeans_iter)
     
@@ -187,19 +186,77 @@ def main(dataset="asmpt_train", n_max_node=3, threshold=0.01, kmeans_iter=10, as
 
 
 if __name__ == '__main__':
+    # deep = True
+    # n_max_node = 100
+    # kmeans_iter = 10
+    # target = 0
+    # layer_max_node = 5
+    # train_mse, test_mse = main(
+    #                             dataset="asmpt_train", 
+    #                             n_max_node=n_max_node, 
+    #                             threshold=0.5, 
+    #                             kmeans_iter=kmeans_iter, 
+    #                             asmpt_target=target,
+    #                             deep=deep,
+    #                             layer_max_node=layer_max_node
+    #                         )
+
+    
+    ## Deep JMLM
     deep = True
-    n_max_node = 10
+    n_centers = list(range(5, 101, 5))
     kmeans_iter = 10
-    target = 0
-    # main()
-    train_mse, test_mse = main(
+    targets = list(range(0, 6))
+    layer_max_node = 5
+    for target in targets:
+        fig, ax = plt.subplots(1, 1, figsize=(16, 10))
+        train_mse_list = []
+        test_mse_list = []
+        for n_max_node in n_centers:
+            train_mse, test_mse = main(
                                 dataset="asmpt_train", 
                                 n_max_node=n_max_node, 
-                                threshold=0.01, 
+                                threshold=0.5, 
                                 kmeans_iter=kmeans_iter, 
                                 asmpt_target=target,
-                                deep=deep
+                                deep=deep,
+                                layer_max_node=layer_max_node
                             )
+            train_mse_list.append(train_mse)
+            test_mse_list.append(test_mse)
+        min_idx = test_mse_list.index(min(test_mse_list))
+        train_min = "{:.4f}".format(train_mse_list[min_idx])
+        test_min = "{:.4f}".format(test_mse_list[min_idx])
+        ax.set_title(f"kmeans_iter: {kmeans_iter}\nnumber of centers:{(min_idx+1*5)}\nTrain MSE: {train_min}, Test MSE: {test_min}")
+        ax.plot(n_centers, train_mse_list, label=f'Train', marker='o')
+        ax.plot(n_centers, test_mse_list, label=f'Test', marker='s', c='r')
+        for x, y in enumerate(train_mse_list):
+            label = "{:.4f}".format(y)
+            ax.annotate(label, # this is the text
+                        ((x+1)*5,y), # these are the coordinates to position the label
+                        textcoords="offset points", # how to position the text
+                        xytext=(0,10), # distance from text to points (x,y)
+                        size=8,
+                        ha='center') # horizontal alignment can be left, right or center
+            
+        for x, y in enumerate(test_mse_list):
+            label = "{:.4f}".format(y)
+            ax.annotate(label, # this is the text
+                        ((x+1)*5,y), # these are the coordinates to position the label
+                        textcoords="offset points", # how to position the text
+                        xytext=(0,10), # distance from text to points (x,y)
+                        size=8,
+                        ha='center') # horizontal alignment can be left, right or center
+        ax.legend(loc='best')
+        ax.grid('on')
+        ax.set_xlabel(r"Number of Centers")
+        ax.set_ylabel(r"$MSE$")
+        fig.canvas.manager.set_window_title(f"target {target}")
+        plt.savefig(f"D:/Applications/vscode/workspace/JMLM/datasets/asmpt/outputs/deep_target_{target}.png")
+        plt.close(fig)
+                
+            
+    ## Normal JMLM
     # targets = list(range(0, 6))
     # n_centers = list(range(1, 21))
     # kmeans_iters = list(range(10, 21, 10))
@@ -223,6 +280,7 @@ if __name__ == '__main__':
     #                                     )
     #             train_mse_list.append(train_mse)
     #             test_mse_list.append(test_mse)
+    
     #         axi = int(kmeans_iter/10 - 1)
     #         min_idx = test_mse_list.index(min(test_mse_list))
     #         train_min = "{:.4f}".format(train_mse_list[min_idx])
